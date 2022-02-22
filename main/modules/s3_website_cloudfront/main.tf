@@ -1,60 +1,68 @@
 provider "aws" {
-  version = "~> 2.0"
   region  = var.region
 }
-
-resource "aws_s3_bucket" "prod_website" {
-  bucket_prefix = var.bucket_prefix
-  acl    = "public-read"
-
-  website {
-    index_document = "index.html"
-    error_document = "error.html"
-
+terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+    version = "~> 4.2"
+    }
+    template = {
+      source = "hashicorp/template"
+      version = "~> 2.2"
+    }
+     external = {
+      source = "hashicorp/external"
+      version = "~> 2.2"
+    }
   }
 }
 
+resource "aws_s3_bucket" "website_bucket" {
+  bucket = "${var.environment}-${var.application_name}"
 
-resource "aws_s3_bucket_policy" "prod_website" {
-  bucket = aws_s3_bucket.prod_website.id
+}
 
-  policy = <<POLICY
-{
-    "Version": "2012-10-17",
-    "Statement": [
-        {
-            "Sid": "PublicReadGetObject",
-            "Effect": "Allow",
-            "Principal": "*",
-            "Action": [
-                "s3:GetObject"
-            ],
-            "Resource": [
-                "arn:aws:s3:::${aws_s3_bucket.prod_website.id}/*"
-            ]
-        }
+
+resource "aws_s3_bucket_policy" "allow_cloudfront_oai" {
+  bucket = aws_s3_bucket.website_bucket.id
+  policy = data.aws_iam_policy_document.s3-frontend-website-getlist-iam-policy.json
+}
+
+data "aws_iam_policy_document" "s3-frontend-website-getlist-iam-policy" {
+  statement {
+    principals {
+      type        = "AWS"
+      identifiers = [aws_cloudfront_origin_access_identity.default.iam_arn]
+    }
+
+    actions = [
+      "s3:GetObject",
+      "s3:ListBucket",
     ]
+
+    resources = [
+      aws_s3_bucket.website_bucket.arn,
+      "${aws_s3_bucket.website_bucket.arn}/*"    ]
+  }
 }
-POLICY
+resource "aws_cloudfront_origin_access_identity" "default" {
+  comment = "${var.environment} website frontend"
 }
 
-locals {
-  s3_origin_id = "prod_website"
-}
 
 resource "aws_cloudfront_distribution" "s3_distribution" {
   origin {
-    domain_name = "${aws_s3_bucket.prod_website.bucket_regional_domain_name}"
+    domain_name = "${aws_s3_bucket.website_bucket.bucket_regional_domain_name}"
     origin_id   = "${local.s3_origin_id}"
-
-    #   s3_origin_config {
-    #     origin_access_identity = "origin-access-identity/cloudfront/ABCDEFG1234567"
-    #   }
+ s3_origin_config {
+      origin_access_identity = aws_cloudfront_origin_access_identity.default.cloudfront_access_identity_path
+    }
   }
 
   enabled             = true
   is_ipv6_enabled     = true
-  comment             = "Some comment"
+  comment             = "${var.environment} distribution"
   default_root_object = "index.html"
 
   # logging_config {
@@ -86,7 +94,7 @@ resource "aws_cloudfront_distribution" "s3_distribution" {
 
   # Cache behavior with precedence 0
   ordered_cache_behavior {
-    path_pattern     = "/content/immutable/*"
+    path_pattern     = "${local.application_path}/*"
     allowed_methods  = ["GET", "HEAD", "OPTIONS"]
     cached_methods   = ["GET", "HEAD", "OPTIONS"]
     target_origin_id = "${local.s3_origin_id}"
@@ -107,29 +115,8 @@ resource "aws_cloudfront_distribution" "s3_distribution" {
     viewer_protocol_policy = "redirect-to-https"
   }
 
-  # Cache behavior with precedence 1
-  ordered_cache_behavior {
-    path_pattern     = "/content/*"
-    allowed_methods  = ["GET", "HEAD", "OPTIONS"]
-    cached_methods   = ["GET", "HEAD"]
-    target_origin_id = "${local.s3_origin_id}"
 
-    forwarded_values {
-      query_string = false
-
-      cookies {
-        forward = "none"
-      }
-    }
-
-    min_ttl                = 0
-    default_ttl            = 3600
-    max_ttl                = 86400
-    compress               = true
-    viewer_protocol_policy = "redirect-to-https"
-  }
-
-  price_class = "PriceClass_200"
+ # price_class = "PriceClass_200"
 
   restrictions {
     geo_restriction {
@@ -139,11 +126,17 @@ resource "aws_cloudfront_distribution" "s3_distribution" {
   }
 
   tags = {
-    Environment = "production"
+    Environment = "${var.environment}"
   }
 
   viewer_certificate {
     cloudfront_default_certificate = true
+  }
+
+  module "s3_objects" {
+    source = "${path.module}../s3_object"
+  bucket = aws_s3_bucket.website_bucket.id
+
   }
 }
 

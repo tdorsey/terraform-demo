@@ -16,6 +16,17 @@ variable "versioning" {
     default     = true
 }
 
+variable "block_public_policy" {
+    type        = bool
+    description = "https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/s3_bucket_public_access_block#block_public_policy"
+    default     = true
+}
+variable "block_public_acls" {
+    type        = bool
+    description = "https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/s3_bucket_public_access_block#block_public_acls"
+    default     = true
+}
+
 variable "target_bucket" {
     type        = string
     description = "(Required) The name of the bucket that will receive the log objects."
@@ -48,3 +59,10 @@ variable "tags" {
         terraform   = "true"
     }
 }
+
+variable "region" {
+  type        = string
+  default     = "us-east-1"
+  description = "The S3 region where the bucket will be created"
+}
+
